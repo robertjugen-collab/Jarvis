@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis HUD</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="bg"></canvas>
+  <div class="scanlines"></div>
+
+  <!-- Boot overlay -->
+  <div id="boot">
+    <div class="boot-inner">
+      <div class="boot-title">INITIERAR SYSTEM</div>
+      <pre id="boot-log"></pre>
+      <div class="boot-bar"><span id="boot-fill"></span></div>
+      <button id="boot-start" hidden>AKTIVERA</button>
+    </div>
+  </div>
+
+  <!-- Homey-anslutning -->
+  <div id="setup" class="modal" hidden>
+    <form class="setup-box panel" id="setup-form" autocomplete="off">
+      <h2>ANSLUT HOMEY <small id="setup-state">EJ ANSLUTEN</small></h2>
+      <p class="setup-help">
+        Jarvis styr lampor och läser givare via din Homey Pro i det lokala nätverket.
+        Skapa en API-nyckel i Homey-appen under <b>Inställningar → API-nycklar</b>
+        (behörighet för enheter, zoner och flöden). IP-adressen finns under <b>Inställningar → Allmänt</b>.
+      </p>
+      <label>IP-ADRESS
+        <input id="setup-url" placeholder="192.168.1.50" required inputmode="url" spellcheck="false">
+      </label>
+      <label>API-NYCKEL
+        <input id="setup-token" type="password" placeholder="Klistra in nyckeln" spellcheck="false">
+      </label>
+      <div class="setup-msg" id="setup-msg"></div>
+      <div class="setup-actions">
+        <button type="button" id="setup-skip">HOPPA ÖVER</button>
+        <button type="button" id="setup-disconnect" hidden>KOPPLA FRÅN</button>
+        <button type="submit" id="setup-submit" class="primary">ANSLUT</button>
+      </div>
+      <p class="setup-note">Nyckeln sparas bara i <code>homey.config.json</code> på den här datorn och skickas aldrig vidare till webbläsaren.</p>
+    </form>
+  </div>
+
+  <!-- Claude-anslutning -->
+  <div id="claude-setup" class="modal" hidden>
+    <form class="setup-box panel" id="claude-form" autocomplete="off">
+      <h2>ANSLUT CLAUDE <small id="claude-state">EJ ANSLUTEN</small></h2>
+      <p class="setup-help">
+        Med Claude som hjärna förstår Jarvis vanligt språk, kan svara på frågor, söka på webben
+        och styra hemmet utan fasta kommandon. Skapa en API-nyckel på
+        <b>platform.claude.com → API Keys</b>. Användningen debiteras ditt Anthropic-konto.
+      </p>
+      <label>API-NYCKEL
+        <input id="claude-key" type="password" placeholder="sk-ant-…" required spellcheck="false">
+      </label>
+      <fieldset class="models">
+        <legend>MODELL</legend>
+        <label class="model-opt"><input type="radio" name="claude-model" value="claude-haiku-5-5">
+          <span><b>Haiku 5.5</b><small>Snabbast och billigast · ca 1–2 öre per fråga</small></span></label>
+        <label class="model-opt"><input type="radio" name="claude-model" value="claude-sonnet-5-5">
+          <span><b>Sonnet 5.5</b><small>Smartare, bra balans · ca 10–30 öre per fråga</small></span></label>
+        <label class="model-opt"><input type="radio" name="claude-model" value="claude-opus-5-5">
+          <span><b>Opus 5.5</b><small>Mest kapabel · ca 20–60 öre per fråga</small></span></label>
+      </fieldset>
+      <div class="setup-msg" id="claude-msg"></div>
+      <div class="setup-actions">
+        <button type="button" id="claude-remove" hidden>TA BORT NYCKEL</button>
+        <button type="button" id="claude-skip">HOPPA ÖVER</button>
+        <button type="submit" id="claude-submit" class="primary">ANSLUT</button>
+      </div>
+      <p class="setup-note">Nyckeln sparas bara i <code>claude.config.json</code> på den här datorn och skickas aldrig till webbläsaren.</p>
+    </form>
+  </div>
+
+  <main id="hud">
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="brand">J.A.R.V.I.S <small>v4.2 // PERSONAL ASSISTANT</small></div>
+      <div class="status-pills">
+        <span class="pill"><i class="dot ok"></i>ONLINE</span>
+        <span class="pill" id="pill-net"><i class="dot"></i>NET</span>
+        <span class="pill" id="pill-mic"><i class="dot off"></i>MIC</span>
+        <button class="pill" id="pill-homey" title="Homey-anslutning"><i class="dot off"></i>HOMEY ⚙</button>
+        <button class="pill" id="pill-claude" title="Claude-anslutning"><i class="dot off"></i>CLAUDE ⚙</button>
+        <span class="pill" id="pill-alarm" hidden><i class="dot"></i><span>LARM</span></span>
+      </div>
+      <div class="topclock" id="topclock">--:--:--</div>
+    </header>
+
+    <!-- Left column -->
+    <section class="col left">
+      <div class="panel">
+        <h2>TID // DATUM</h2>
+        <div class="bigclock" id="clock">00:00<span id="sec">:00</span></div>
+        <div class="date" id="date">—</div>
+        <div class="row small"><span>VECKA</span><b id="week">--</b></div>
+        <div class="row small"><span>SOLUPPGÅNG</span><b id="sunrise">--</b></div>
+        <div class="row small"><span>SOLNEDGÅNG</span><b id="sunset">--</b></div>
+      </div>
+
+      <div class="panel">
+        <h2>VÄDER <small id="wx-place">LOKALISERAR…</small></h2>
+        <div class="wx-main">
+          <div class="wx-temp" id="wx-temp">--°</div>
+          <div class="wx-desc" id="wx-desc">Hämtar data…</div>
+        </div>
+        <div class="row small"><span>VIND</span><b id="wx-wind">--</b></div>
+        <div class="row small"><span>LUFTFUKTIGHET</span><b id="wx-hum">--</b></div>
+        <div class="forecast" id="wx-fc"></div>
+      </div>
+
+      <div class="panel grow">
+        <h2>KLIMAT <small id="climate-sub">HOMEY</small></h2>
+        <ul id="climate" class="devlist"><li class="hint">Väntar på Homey…</li></ul>
+      </div>
+    </section>
+
+    <!-- Center: reactor -->
+    <section class="center">
+      <div class="reactor" id="reactor">
+        <svg viewBox="-250 -250 500 500" class="rings">
+          <defs>
+            <radialGradient id="core" r="50%">
+              <stop offset="0%" stop-color="#ffffff"/>
+              <stop offset="30%" stop-color="#bff6ff"/>
+              <stop offset="70%" stop-color="#25d5ff" stop-opacity=".6"/>
+              <stop offset="100%" stop-color="#25d5ff" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+          <g class="r r1"><circle r="235" class="thin dash1"/></g>
+          <g class="r r2"><circle r="215" class="thick dash2"/></g>
+          <g class="r r3" id="ticks"></g>
+          <g class="r r4"><circle r="165" class="mid dash3"/></g>
+          <g class="r r5"><circle r="140" class="thin dash4"/></g>
+          <g class="r r6" id="segments"></g>
+          <circle r="95" class="thin"/>
+          <circle r="80" fill="url(#core)" class="core" id="corecircle"/>
+        </svg>
+        <canvas id="wave" width="300" height="300"></canvas>
+        <div class="reactor-label">
+          <div class="rl-name">JARVIS</div>
+          <div class="rl-state" id="state">VILOLÄGE</div>
+        </div>
+      </div>
+
+      <div class="transcript">
+        <div id="heard" class="heard">&nbsp;</div>
+        <div id="reply" class="reply">God dag. Hur kan jag hjälpa dig?</div>
+      </div>
+
+      <form id="cmd" class="cmd" autocomplete="off">
+        <button type="button" id="micbtn" title="Röststyrning">
+          <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2z"/></svg>
+        </button>
+        <input id="cmdinput" placeholder="Skriv ett kommando… (prova 'hjälp' eller 'tänd i köket')">
+        <button type="submit">SKICKA</button>
+      </form>
+
+      <div class="panel logpanel">
+        <h2>SYSTEMLOGG</h2>
+        <ul id="log" class="log"></ul>
+      </div>
+    </section>
+
+    <!-- Right column -->
+    <section class="col right">
+      <div class="panel">
+        <h2>RADAR // NÄROMRÅDE</h2>
+        <canvas id="radar" width="260" height="260"></canvas>
+      </div>
+
+      <div class="panel">
+        <h2>ENERGI <small id="energy-sub">LIVE</small></h2>
+        <div class="energy">
+          <div><span>FÖRBRUKNING</span><b id="e-house">-- W</b></div>
+          <div><span>SOLCELLER</span><b id="e-solar">-- W</b></div>
+        </div>
+        <canvas id="graph" width="300" height="90"></canvas>
+      </div>
+
+      <div class="panel grow">
+        <h2>BELYSNING <small id="lights-sub">--</small></h2>
+        <ul id="lights" class="devlist"><li class="hint">Väntar på Homey…</li></ul>
+      </div>
+    </section>
+
+    <footer class="bottombar">
+      <span>SECURE LINK // AES-256</span>
+      <span id="coords">LAT --.---- LON --.----</span>
+      <span>UPTIME <b id="uptime">00:00:00</b></span>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
